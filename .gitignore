@@ -19,7 +19,7 @@
 /bin/
 /obj/
 /output/
-/.vscode
+.vscode/
 
 # core dump
 core
