@@ -1,6 +1,0 @@
-{
-    "files.associations": {
-        "cstdint": "c",
-        "stddef.h": "c"
-    }
-}
