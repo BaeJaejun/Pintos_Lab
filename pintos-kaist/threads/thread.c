@@ -63,6 +63,11 @@ static void do_schedule(int status);
 static void schedule(void);
 static tid_t allocate_tid(void);
 
+/* 우리끼리 짠 함수 */
+static bool
+priority_larger (const struct list_elem *a_, const struct list_elem *b_,
+            void *aux UNUSED);
+
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
 
@@ -174,6 +179,40 @@ void thread_print_stats(void)
    The code provided sets the new thread's `priority' member to
    PRIORITY, but no actual priority scheduling is implemented.
    Priority scheduling is the goal of Problem 1-3. */
+// tid_t thread_create(const char *name, int priority,
+// 					thread_func *function, void *aux)
+// {
+// 	struct thread *t;
+// 	tid_t tid;
+
+// 	ASSERT(function != NULL);
+
+// 	/* Allocate thread. */
+// 	t = palloc_get_page(PAL_ZERO);
+// 	if (t == NULL)
+// 		return TID_ERROR;
+
+// 	/* Initialize thread. */
+// 	init_thread(t, name, priority);
+// 	tid = t->tid = allocate_tid();
+
+// 	/* Call the kernel_thread if it scheduled.
+// 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
+// 	t->tf.rip = (uintptr_t)kernel_thread;
+// 	t->tf.R.rdi = (uint64_t)function;
+// 	t->tf.R.rsi = (uint64_t)aux;
+// 	t->tf.ds = SEL_KDSEG;
+// 	t->tf.es = SEL_KDSEG;
+// 	t->tf.ss = SEL_KDSEG;
+// 	t->tf.cs = SEL_KCSEG;
+// 	t->tf.eflags = FLAG_IF;
+
+// 	/* Add to run queue. */
+// 	thread_unblock(t);
+
+// 	return tid;
+// }
+
 tid_t thread_create(const char *name, int priority,
 					thread_func *function, void *aux)
 {
@@ -204,6 +243,9 @@ tid_t thread_create(const char *name, int priority,
 
 	/* Add to run queue. */
 	thread_unblock(t);
+	if(t->priority > thread_current()->priority){
+		thread_yield();
+	}
 
 	return tid;
 }
@@ -238,9 +280,11 @@ void thread_unblock(struct thread *t)
 
 	old_level = intr_disable();
 	ASSERT(t->status == THREAD_BLOCKED);
-	list_push_back(&ready_list, &t->elem);
+	// list_push_back(&ready_list, &t->elem);
+	list_insert_ordered(&ready_list, &t->elem, priority_larger, NULL);
 	t->status = THREAD_READY;
 	intr_set_level(old_level);
+
 }
 
 /* Returns the name of the running thread. */
@@ -303,7 +347,9 @@ void thread_yield(void)
 
 	old_level = intr_disable();
 	if (curr != idle_thread)
-		list_push_back(&ready_list, &curr->elem);
+		// list_push_back(&ready_list, &curr->elem);
+		list_insert_ordered(&ready_list, &curr->elem, 
+			priority_larger, NULL);
 	do_schedule(THREAD_READY);
 	intr_set_level(old_level);
 }
@@ -311,7 +357,30 @@ void thread_yield(void)
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void thread_set_priority(int new_priority)
 {
-	thread_current()->priority = new_priority;
+	struct thread *curr_t = thread_current();
+	curr_t->priority = new_priority;
+	thread_yield();
+	// struct thread *next_t = list_entry(list_front(&ready_list),
+	// 						 struct thread, elem);
+
+	// if(next_t->priority > curr_t->priority){
+	// 	curr_t->original_priority = curr_t->priority;
+	// 	curr_t->priority = next_t->priority;
+	// 	curr_t->
+	// }
+	
+	// struct thread *curr_t = thread_current();
+	// int old_priority = curr_t->priority;
+	// curr_t->priority = new_priority;
+	// if(!list_empty(&ready_list)){
+	// 	struct thread *next_t = list_entry(list_front(&ready_list),
+	// 							 struct thread, elem);
+	// 	if(next_t->priority = new_priority){
+	// 		thread_yield();
+	// 	}
+	// }
+
+
 }
 
 /* Returns the current thread's priority. */
@@ -323,6 +392,7 @@ int thread_get_priority(void)
 /* Sets the current thread's nice value to NICE. */
 void thread_set_nice(int nice UNUSED)
 {
+
 	/* TODO: Your implementation goes here */
 }
 
@@ -577,6 +647,7 @@ schedule(void)
 		{
 			ASSERT(curr != next);
 			list_push_back(&destruction_req, &curr->elem);
+			// list_insert_ordered()
 		}
 
 		/* Before switching the thread, we first save the information
@@ -598,3 +669,23 @@ allocate_tid(void)
 
 	return tid;
 }
+
+/* 우선순위 별로 삽입하기 위한 정렬 방식 */
+static bool
+priority_larger (const struct list_elem *a_, const struct list_elem *b_,
+            void *aux UNUSED) 
+{
+  const struct thread *a = list_entry (a_, struct thread, elem);
+  const struct thread *b = list_entry (b_, struct thread, elem);
+  
+  return a->priority > b->priority;
+}
+
+static void aquire_lock(){
+	int prev_priority = thread_current()->priority;
+	
+}
+
+// static void release_lock(){
+
+// }
