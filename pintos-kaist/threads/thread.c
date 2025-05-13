@@ -78,6 +78,12 @@ static tid_t allocate_tid(void);
 // setup temporal gdt first.
 static uint64_t gdt[3] = {0, 0x00af9a000000ffff, 0x00cf92000000ffff};
 
+/* ready_list 비교함수 선언*/
+static bool thread_priority_greater(const struct list_elem *a, const struct list_elem *b, void *aux);
+
+/* 양보 시 우선순위 선점 함수 선언*/
+static void thread_preempt(struct thread *t);
+
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -222,6 +228,15 @@ void thread_block(void)
 	schedule();
 }
 
+static bool thread_priority_greater(const struct list_elem *a,
+									const struct list_elem *b, void *aux)
+{
+	const struct thread *t1 = list_entry(a, struct thread, elem);
+	const struct thread *t2 = list_entry(b, struct thread, elem);
+
+	return t1->priority > t2->priority;
+}
+
 /* Transitions a blocked thread T to the ready-to-run state.
    This is an error if T is not blocked.  (Use thread_yield() to
    make the running thread ready.)
@@ -229,7 +244,26 @@ void thread_block(void)
    This function does not preempt the running thread.  This can
    be important: if the caller had disabled interrupts itself,
    it may expect that it can atomically unblock a thread and
-   update other data. */
+   update other data.
+   */
+// void thread_unblock(struct thread *t)
+// {
+// 	enum intr_level old_level;
+
+// 	ASSERT(is_thread(t));
+
+// 	old_level = intr_disable();
+// 	ASSERT(t->status == THREAD_BLOCKED);
+// 	list_push_back(&ready_list, &t->elem);
+// 	t->status = THREAD_READY;
+// 	intr_set_level(old_level);
+// }
+/*
+	list_insert_ordered() : 삽입 시 정렬을 유지하면서 삽입
+	thread_priority_greater : 내림차순 정렬을 위한 함수
+	intr_yield_on_return() : 타이머 irq 컨텍스트에서도
+							안전하게 다음에 스케줄링 하도록 예약
+*/
 void thread_unblock(struct thread *t)
 {
 	enum intr_level old_level;
@@ -238,9 +272,24 @@ void thread_unblock(struct thread *t)
 
 	old_level = intr_disable();
 	ASSERT(t->status == THREAD_BLOCKED);
-	list_push_back(&ready_list, &t->elem);
+	// list_push_back(&ready_list, &t->elem);
+	list_insert_ordered(&ready_list, &t->elem, thread_priority_greater, NULL);
 	t->status = THREAD_READY;
 	intr_set_level(old_level);
+
+	thread_preempt(t);
+}
+
+static void thread_preempt(struct thread *t)
+{
+	/* idle 스레드는 건너뛰고, 더 높은 우선순위면 선점 예약/실행 */
+	if (thread_current() != idle_thread && t->priority > thread_get_priority())
+	{
+		if (intr_context())
+			intr_yield_on_return();
+		else
+			thread_yield();
+	}
 }
 
 /* Returns the name of the running thread. */
@@ -294,6 +343,20 @@ void thread_exit(void)
 
 /* Yields the CPU.  The current thread is not put to sleep and
    may be scheduled again immediately at the scheduler's whim. */
+// void thread_yield(void)
+// {
+// 	struct thread *curr = thread_current();
+// 	enum intr_level old_level;
+
+// 	ASSERT(!intr_context());
+
+// 	old_level = intr_disable();
+// 	if (curr != idle_thread)
+// 		list_push_back(&ready_list, &curr->elem);
+// 	do_schedule(THREAD_READY);
+// 	intr_set_level(old_level);
+// }
+
 void thread_yield(void)
 {
 	struct thread *curr = thread_current();
@@ -303,7 +366,10 @@ void thread_yield(void)
 
 	old_level = intr_disable();
 	if (curr != idle_thread)
-		list_push_back(&ready_list, &curr->elem);
+	{
+		// list_push_back(&ready_list, &curr->elem);
+		list_insert_ordered(&ready_list, &curr->elem, thread_priority_greater, NULL);
+	}
 	do_schedule(THREAD_READY);
 	intr_set_level(old_level);
 }
