@@ -20,6 +20,9 @@
 /obj/
 /output/
 
+# vscode 환경설정 디렉터리
+.vscode/
+
 # core dump
 core
 
