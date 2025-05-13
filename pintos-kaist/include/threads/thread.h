@@ -109,9 +109,8 @@ struct thread
 	struct intr_frame tf; /* Information for switching */
 	unsigned magic;		  /* Detects stack overflow. */
 
-	/* alarm을 위한 깨울 시각, 슬립 리스트 연결용 엘리먼트 추가*/
+	/* alarm을 위한 깨울 시각 */
 	int64_t wakeup_tick;
-	struct list_elem sleep_elem;
 };
 
 /* If false (default), use round-robin scheduler.

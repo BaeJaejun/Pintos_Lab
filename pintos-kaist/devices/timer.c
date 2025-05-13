@@ -111,8 +111,8 @@ timer_elapsed(int64_t then)
 static bool wakeup_tick_less(const struct list_elem *a,
 							 const struct list_elem *b, void *aux UNUSED)
 {
-	const struct thread *t1 = list_entry(a, struct thread, sleep_elem);
-	const struct thread *t2 = list_entry(b, struct thread, sleep_elem);
+	const struct thread *t1 = list_entry(a, struct thread, elem);
+	const struct thread *t2 = list_entry(b, struct thread, elem);
 
 	return t1->wakeup_tick < t2->wakeup_tick;
 }
@@ -135,7 +135,7 @@ void timer_sleep(int64_t ticks)
 	enum intr_level old_level = intr_disable();
 
 	thread_current()->wakeup_tick = start + ticks;
-	list_insert_ordered(&sleep_list, &thread_current()->sleep_elem, wakeup_tick_less, NULL);
+	list_insert_ordered(&sleep_list, &thread_current()->elem, wakeup_tick_less, NULL);
 	thread_block();
 
 	intr_set_level(old_level);
@@ -183,7 +183,7 @@ timer_interrupt(struct intr_frame *args UNUSED)
 	while (!list_empty(&sleep_list))
 	{
 		struct thread *t = list_entry(list_front(&sleep_list),
-									  struct thread, sleep_elem);
+									  struct thread, elem);
 		if (t->wakeup_tick > timer_ticks())
 			break;
 		list_pop_front(&sleep_list);
