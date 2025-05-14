@@ -208,8 +208,10 @@ tid_t thread_create(const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
-	/* Add to run queue. */
 	thread_unblock(t);
+	/* Add to run queue. */
+	if(thread_current()->priority < t->priority)
+		thread_yield();
 
 	return tid;
 }
@@ -277,7 +279,7 @@ void thread_unblock(struct thread *t)
 	t->status = THREAD_READY;
 	intr_set_level(old_level);
 
-	thread_preempt(t);
+	// thread_preempt(t);
 }
 
 static void thread_preempt(struct thread *t)
