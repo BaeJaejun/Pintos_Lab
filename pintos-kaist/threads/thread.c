@@ -78,12 +78,6 @@ static tid_t allocate_tid(void);
 // setup temporal gdt first.
 static uint64_t gdt[3] = {0, 0x00af9a000000ffff, 0x00cf92000000ffff};
 
-/* ready_list 비교함수 선언*/
-static bool thread_priority_greater(const struct list_elem *a, const struct list_elem *b, void *aux);
-
-/* 양보 시 우선순위 선점 함수 선언*/
-static void thread_preempt(struct thread *t);
-
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -228,8 +222,8 @@ void thread_block(void)
 	schedule();
 }
 
-static bool thread_priority_greater(const struct list_elem *a,
-									const struct list_elem *b, void *aux)
+bool thread_priority_greater(const struct list_elem *a,
+							 const struct list_elem *b, void *aux)
 {
 	const struct thread *t1 = list_entry(a, struct thread, elem);
 	const struct thread *t2 = list_entry(b, struct thread, elem);
@@ -277,13 +271,20 @@ void thread_unblock(struct thread *t)
 	t->status = THREAD_READY;
 	intr_set_level(old_level);
 
-	thread_preempt(t);
+	// thread_preempt();
 }
 
-static void thread_preempt(struct thread *t)
+/* 더 높은 우선순위면 선점 예약/실행 */
+void thread_preempt(void)
 {
-	/* idle 스레드는 건너뛰고, 더 높은 우선순위면 선점 예약/실행 */
-	if (thread_current() != idle_thread && t->priority > thread_get_priority())
+	if (list_empty(&ready_list))
+	{
+		return;
+	}
+	struct list_elem *e = list_begin(&ready_list);
+	struct thread *t = list_entry(e, struct thread, elem);
+
+	if (t->priority > thread_get_priority())
 	{
 		if (intr_context())
 			intr_yield_on_return();
@@ -374,10 +375,20 @@ void thread_yield(void)
 	intr_set_level(old_level);
 }
 
-/* Sets the current thread's priority to NEW_PRIORITY. */
+/* Sets the current thread's priority to NEW_PRIORITY.
+	유저가 직접 우선순위가 변경 가능하게
+	thread_update_priority()를 해주어 donation과 충돌 없도록
+*/
 void thread_set_priority(int new_priority)
 {
-	thread_current()->priority = new_priority;
+	enum intr_level old = intr_disable();
+
+	thread_current()->base_priority = new_priority;
+	thread_update_priority();
+
+	intr_set_level(old);
+
+	thread_preempt();
 }
 
 /* Returns the current thread's priority. */
@@ -478,6 +489,11 @@ init_thread(struct thread *t, const char *name, int priority)
 	t->tf.rsp = (uint64_t)t + PGSIZE - sizeof(void *);
 	t->priority = priority;
 	t->magic = THREAD_MAGIC;
+
+	/* priority donate를 위한 변수들 초기화*/
+	t->base_priority = priority;
+	list_init(&t->donation_list);
+	t->waiting_lock = NULL;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
@@ -663,4 +679,65 @@ allocate_tid(void)
 	lock_release(&tid_lock);
 
 	return tid;
+}
+
+/* donate를 위한 함수 구현부*/
+void thread_donate_priority(void)
+{
+	enum intr_level old_level = intr_disable();
+
+	struct thread *cur = thread_current();
+	struct lock *lock = cur->waiting_lock;
+
+	/* nested donation */
+	while (lock != NULL && lock->holder != NULL)
+	{
+		struct thread *holder = lock->holder;
+
+		/* 우선순위 역전 상태*/
+		if (holder->priority < cur->priority)
+		{
+			holder->priority = cur->priority;
+			list_push_back(&holder->donation_list, &cur->donation_elem);
+		}
+		/* 다음 단계로 */
+		cur = holder;
+		lock = cur->waiting_lock;
+	}
+	intr_set_level(old_level);
+}
+
+/* lock_release()에서 lock과 관련된 기부를 제거하는 함수*/
+void thread_remove_donations_for_lock(struct lock *lock)
+{
+	struct thread *cur = thread_current();
+	struct list_elem *e = list_begin(&cur->donation_list);
+
+	while (e != list_end(&cur->donation_list))
+	{
+		struct thread *donor = list_entry(e, struct thread, donation_elem);
+		e = list_next(e);
+		if (donor->waiting_lock == lock)
+			list_remove(&donor->donation_elem);
+	}
+}
+
+/* 기부 제거 후 base_priority / donateion_list의 최댓값 비교해
+							우선순위 업데이트해주는 함수*/
+void thread_update_priority(void)
+{
+	struct thread *cur = thread_current();
+	struct list_elem *e = list_begin(&cur->donation_list);
+	int max_prio = cur->base_priority;
+
+	while (e != list_end(&cur->donation_list))
+	{
+		struct thread *donor = list_entry(e, struct thread, donation_elem);
+		e = list_next(e);
+		if (max_prio < donor->priority)
+		{
+			max_prio = donor->priority;
+		}
+	}
+	cur->priority = max_prio;
 }

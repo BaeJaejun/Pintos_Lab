@@ -188,6 +188,7 @@ timer_interrupt(struct intr_frame *args UNUSED)
 			break;
 		list_pop_front(&sleep_list);
 		thread_unblock(t);
+		thread_preempt();
 	}
 }
 
