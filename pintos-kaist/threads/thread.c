@@ -685,31 +685,44 @@ allocate_tid(void)
 }
 
 /* donate를 위한 함수 구현부*/
-void thread_donate_priority(void)
-{
-	enum intr_level old_level = intr_disable();
+void thread_donate_priority(void) {
+    enum intr_level old_level = intr_disable();
 
-	struct thread *cur = thread_current();
-	struct lock *lock = cur->waiting_lock;
-	int dept = 0;
-	/* nested donation */
-	while (lock != NULL && lock->holder != NULL && dept < 8)
-	{
-		struct thread *holder = lock->holder;
+    int depth;
+    struct thread *cur = thread_current();
+    struct lock *lock = cur->waiting_lock;
 
-		/* 우선순위 역전 상태*/
-		if (holder->priority < cur->priority)
-		{
-			holder->priority = cur->priority;
-			list_push_back(&holder->donation_list, &cur->donation_elem);
-		}
-		/* 다음 단계로 */
-		cur = holder;
-		lock = cur->waiting_lock;
-		dept++;
-	}
-	intr_set_level(old_level);
+    for (depth = 0; depth < 8; depth++) {
+        if (lock == NULL || lock->holder == NULL)
+            break;
+
+        struct thread *holder = lock->holder;
+
+        // priority 비교해서 기부
+        if (holder->priority < cur->priority)
+            holder->priority = cur->priority;
+
+        // 중복 기부 방지
+        bool already = false;
+        struct list_elem *e;
+        for (e = list_begin(&holder->donation_list); e != list_end(&holder->donation_list); e = list_next(e)) {
+            struct thread *donor = list_entry(e, struct thread, donation_elem);
+            if (donor == cur) {
+                already = true;
+                break;
+            }
+        }
+        if (!already) {
+            list_push_back(&holder->donation_list, &cur->donation_elem);
+        }
+
+        cur = holder;
+        lock = cur->waiting_lock;
+    }
+
+    intr_set_level(old_level);
 }
+
 
 /* lock_release()에서 lock과 관련된 기부를 제거하는 함수*/
 void thread_remove_donations_for_lock(struct lock *lock)
@@ -720,9 +733,10 @@ void thread_remove_donations_for_lock(struct lock *lock)
 	while (e != list_end(&cur->donation_list))
 	{
 		struct thread *donor = list_entry(e, struct thread, donation_elem);
-		e = list_next(e);
 		if (donor->waiting_lock == lock)
-			list_remove(&donor->donation_elem);
+			e = list_remove(e); // 삭제 후 반환값으로 다음 원소 이동
+		else
+			e = list_next(e);
 	}
 }
 
