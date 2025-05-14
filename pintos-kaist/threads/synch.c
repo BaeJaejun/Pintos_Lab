@@ -113,13 +113,15 @@ void sema_up(struct semaphore *sema)
 	old_level = intr_disable();
 	if (!list_empty(&sema->waiters))
 	{
+		/* 기부로 우선순위가 바뀌었을 수 있으니 재정렬을 수행*/
+		list_sort(&sema->waiters, thread_priority_greater, NULL);
 		thread_unblock(list_entry(list_pop_front(&sema->waiters),
 								  struct thread, elem));
 	}
 	sema->value++;
 	intr_set_level(old_level);
 
-	/* 선점 추가*/
+	/* 선점 추가 */
 	thread_preempt();
 }
 

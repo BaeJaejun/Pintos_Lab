@@ -205,6 +205,9 @@ tid_t thread_create(const char *name, int priority,
 	/* Add to run queue. */
 	thread_unblock(t);
 
+	/* 새 스레드에게 cpu에 올라가서 기부및 선점 할지 말지 기회를 준다.*/
+	thread_preempt();
+
 	return tid;
 }
 
@@ -688,9 +691,9 @@ void thread_donate_priority(void)
 
 	struct thread *cur = thread_current();
 	struct lock *lock = cur->waiting_lock;
-
+	int dept = 0;
 	/* nested donation */
-	while (lock != NULL && lock->holder != NULL)
+	while (lock != NULL && lock->holder != NULL && dept < 8)
 	{
 		struct thread *holder = lock->holder;
 
@@ -703,6 +706,7 @@ void thread_donate_priority(void)
 		/* 다음 단계로 */
 		cur = holder;
 		lock = cur->waiting_lock;
+		dept++;
 	}
 	intr_set_level(old_level);
 }
