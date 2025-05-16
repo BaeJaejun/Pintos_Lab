@@ -188,6 +188,8 @@ timer_interrupt(struct intr_frame *args UNUSED)
 			break;
 		list_pop_front(&sleep_list);
 		thread_unblock(t);
+		/* 선점 추가 */
+		thread_preempt();
 	}
 }
 

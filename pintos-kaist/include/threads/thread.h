@@ -112,6 +112,17 @@ struct thread
 	/* alarm을 위한 깨울 시각, 슬립 리스트 연결용 엘리먼트 추가*/
 	int64_t wakeup_tick;
 	struct list_elem sleep_elem;
+
+	/* donate를 위한 변수들
+		base_priority : 원래 우선순위
+		donation_list : 나한테 기부된 우선순위들
+		donation_elem : donation_list에 들어갈 list_elem
+		wating_lock : 내가 얻으려고 기다리는 락
+	*/
+	int base_priority;
+	struct list donation_list;
+	struct list_elem donation_elem;
+	struct lock *waiting_lock;
 };
 
 /* If false (default), use round-robin scheduler.
@@ -147,5 +158,21 @@ int thread_get_recent_cpu(void);
 int thread_get_load_avg(void);
 
 void do_iret(struct intr_frame *tf);
+
+/*
+ priority donate를 위한 함수 선언
+ thread_donate_priority() : donation
+ thread_remove_donations_for_lock() : lock 해제 시 해당 기부 제거
+ thread_update_prioriy() : base + donation 중 최대값으로 priority 갱신
+*/
+void thread_donate_priority(void);
+void thread_remove_donations_for_lock(struct lock *lock);
+void thread_update_priority(void);
+
+/* ready_list 비교함수 선언*/
+bool thread_priority_greater(const struct list_elem *a, const struct list_elem *b, void *aux);
+
+/* 양보 시 우선순위 선점 함수 선언*/
+void thread_preempt(void);
 
 #endif /* threads/thread.h */
