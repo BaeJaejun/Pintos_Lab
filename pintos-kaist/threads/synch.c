@@ -68,7 +68,6 @@ void sema_down(struct semaphore *sema)
 	while (sema->value == 0)
 	{
 		list_push_back(&sema->waiters, &thread_current()->elem);
-		// list_insert_ordered(&sema->waiters, &thread_current()->elem, thread_priority_greater, NULL);
 		thread_block();
 	}
 	sema->value--;
@@ -251,7 +250,12 @@ void lock_release(struct lock *lock)
 	struct thread *cur = thread_current();
 
 	lock->holder = NULL;
+
+	/* lock_release()에서 lock과 관련된 기부자들을 제거하는 함수*/
 	thread_remove_donations_for_lock(lock);
+
+	/* 기부 제거 후 base_priority / donateion_list의 최댓값 비교해
+							우선순위 업데이트해주는 함수*/
 	thread_update_priority();
 
 	sema_up(&lock->semaphore);
@@ -315,13 +319,13 @@ void cond_wait(struct condition *cond, struct lock *lock)
 
 	sema_init(&waiter.semaphore, 0);
 	list_push_back(&cond->waiters, &waiter.elem);
-	// list_insert_ordered(&cond->waiters, &waiter.elem, thread_priority_greater, NULL);
 
 	lock_release(lock);
 	sema_down(&waiter.semaphore);
 	lock_acquire(lock);
 }
 
+/* condvar 에서 semaphor_elem 내림차순 정렬을 위한 함수 */
 bool semaphore_priority_greater(const struct list_elem *a,
 								const struct list_elem *b, void *aux)
 {
@@ -347,6 +351,7 @@ void cond_signal(struct condition *cond, struct lock *lock UNUSED)
 
 	if (!list_empty(&cond->waiters))
 	{
+		/* waiter_list에서 pop을 하기 전에 sort*/
 		list_sort(&cond->waiters, semaphore_priority_greater, NULL);
 		sema_up(&list_entry(list_pop_front(&cond->waiters),
 							struct semaphore_elem, elem)

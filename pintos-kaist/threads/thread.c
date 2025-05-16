@@ -274,6 +274,7 @@ void thread_unblock(struct thread *t)
 	t->status = THREAD_READY;
 	intr_set_level(old_level);
 
+	/* 우선순위 선점은 절대로 unblock 함수 내에서 수행 되면 안된다. */
 	// thread_preempt();
 }
 
@@ -360,7 +361,6 @@ void thread_exit(void)
 // 	do_schedule(THREAD_READY);
 // 	intr_set_level(old_level);
 // }
-
 void thread_yield(void)
 {
 	struct thread *curr = thread_current();
@@ -699,7 +699,9 @@ void thread_donate_priority(void)
 
 		holder->priority = cur->priority;
 
-		/* 중복 기부 방지를 위해 전체 순회 , donation_list 검사 -> nest 방지*/
+		/* 중복 기부 방지를 위해 전체 순회 , donation_list 검사 -> nest 방지
+			donation_elem 은 기부자들 리스트이므로 중복된 사람이 들어올 필요X
+		*/
 		bool already = false;
 		struct list_elem *e;
 		for (e = list_begin(&holder->donation_list); e != list_end(&holder->donation_list); e = list_next(e))
@@ -723,7 +725,7 @@ void thread_donate_priority(void)
 	intr_set_level(old_level);
 }
 
-/* lock_release()에서 lock과 관련된 기부를 제거하는 함수*/
+/* lock_release()에서 lock과 관련된 기부자들을 제거하는 함수*/
 void thread_remove_donations_for_lock(struct lock *lock)
 {
 	struct thread *cur = thread_current();
@@ -756,6 +758,10 @@ void thread_update_priority(void)
 		}
 	}
 	cur->priority = max_prio;
+
+	/* ready_list에서 삽입 후 우선순위 변경이 이루어 졌을 때 다시 정렬
+		우선순위 기부받은 스레드가 가장 큰 스레드이므로 삭제후 맨 앞 삽입
+	*/
 	if (cur->status == THREAD_READY)
 	{
 		list_remove(&cur->elem);
