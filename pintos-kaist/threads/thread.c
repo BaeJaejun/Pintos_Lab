@@ -697,10 +697,22 @@ void thread_donate_priority(void)
 	{
 		struct thread *holder = lock->holder;
 
-		/* 우선순위 역전 상태*/
-		if (holder->priority < cur->priority)
+		holder->priority = cur->priority;
+
+		/* 중복 기부 방지를 위해 전체 순회 , donation_list 검사 -> nest 방지*/
+		bool already = false;
+		struct list_elem *e;
+		for (e = list_begin(&holder->donation_list); e != list_end(&holder->donation_list); e = list_next(e))
 		{
-			holder->priority = cur->priority;
+			struct thread *donor = list_entry(e, struct thread, donation_elem);
+			if (donor == cur)
+			{
+				already = true;
+				break;
+			}
+		}
+		if (!already)
+		{
 			list_push_back(&holder->donation_list, &cur->donation_elem);
 		}
 		/* 다음 단계로 */
@@ -744,4 +756,9 @@ void thread_update_priority(void)
 		}
 	}
 	cur->priority = max_prio;
+	if (cur->status == THREAD_READY)
+	{
+		list_remove(&cur->elem);
+		list_push_front(&ready_list, &cur->elem);
+	}
 }
