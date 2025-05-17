@@ -123,6 +123,11 @@ struct thread
 	struct list donation_list;
 	struct list_elem donation_elem;
 	struct lock *waiting_lock;
+
+	/*mlfq 구조체 추가*/
+	int nice;
+  	int recent_cpu;
+	struct list_elem allelem;
 };
 
 /* If false (default), use round-robin scheduler.
@@ -174,5 +179,13 @@ bool thread_priority_greater(const struct list_elem *a, const struct list_elem *
 
 /* 양보 시 우선순위 선점 함수 선언*/
 void thread_preempt(void);
+
+/*mlfq 관련함수 선언*/
+void mlfqs_calculate_priority(struct thread *t);
+void mlfqs_calculate_recent_cpu(struct thread *t);
+void mlfqs_calculate_load_avg(void);
+void mlfqs_increment_recent_cpu(void);
+void mlfqs_recalculate_recent_cpu(void);
+void mlfqs_recalculate_priority(void);
 
 #endif /* threads/thread.h */
