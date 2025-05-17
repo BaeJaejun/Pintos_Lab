@@ -197,6 +197,14 @@ void lock_acquire(struct lock *lock)
 	ASSERT(!intr_context());
 	ASSERT(!lock_held_by_current_thread(lock));
 
+	/*mlfqs opt*/
+	if (thread_mlfqs)
+	{
+		sema_down(&lock->semaphore);
+		lock->holder = thread_current();
+		return;
+	}
+
 	struct thread *cur = thread_current();
 	/* 1) 락 소유자가 있고, 내가 더 높은 우선순위면 기부 */
 	if (lock->holder != NULL)
@@ -246,6 +254,13 @@ void lock_release(struct lock *lock)
 {
 	ASSERT(lock != NULL);
 	ASSERT(lock_held_by_current_thread(lock));
+
+	lock->holder = NULL;
+	if (thread_mlfqs)
+	{
+		sema_up(&lock->semaphore);
+		return;
+	}
 
 	struct thread *cur = thread_current();
 
