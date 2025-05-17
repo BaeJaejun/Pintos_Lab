@@ -180,6 +180,20 @@ timer_interrupt(struct intr_frame *args UNUSED)
 	ticks++;
 	thread_tick();
 
+	if (thread_mlfqs)
+	{
+		mlfqs_increment_recent_cpu();
+		if (ticks % TIMER_FREQ == 0)
+			{
+				mlfqs_calculate_load_avg();
+				mlfqs_recalculate_recent_cpu();
+			}
+		if (ticks % 4 == 0)
+		{
+			mlfqs_recalculate_priority();
+		}
+	}
+
 	while (!list_empty(&sleep_list))
 	{
 		struct thread *t = list_entry(list_front(&sleep_list),
@@ -189,7 +203,9 @@ timer_interrupt(struct intr_frame *args UNUSED)
 		list_pop_front(&sleep_list);
 		thread_unblock(t);
 		/* 선점 추가 */
-		thread_preempt();
+		if(!thread_mlfqs){
+			thread_preempt();
+		}
 	}
 }
 
