@@ -32,9 +32,6 @@ typedef int tid_t;
 #define NICE_DEFAULT 0
 #define RECENT_CPU_DEFAULT 0
 #define LOAD_AVG_DEFAULT 0
-#define F (1 << 14)
-#define INT_MAX ((1 << 31) - 1)
-#define INT_MIN (-(1 << 31))
 
 /* A kernel thread or user process.
  *
@@ -189,5 +186,13 @@ bool thread_priority_greater(const struct list_elem *a, const struct list_elem *
 
 /* 양보 시 우선순위 선점 함수 선언*/
 void thread_preempt(void);
+
+/* mlfq를 위한 함수들 선언*/
+void mlfqs_calculate_priority(struct thread *t);
+void mlfqs_calculate_recent_cpu(struct thread *t);
+void mlfqs_calculate_load_avg(void);
+void mlfqs_increment_recent_cpu(void);
+void mlfqs_recalculate_recent_cpu(void);
+void mlfqs_recalculate_priority(void);
 
 #endif /* threads/thread.h */

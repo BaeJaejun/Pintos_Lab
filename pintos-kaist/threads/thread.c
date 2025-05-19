@@ -10,6 +10,7 @@
 #include "threads/palloc.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/fixed_point.h"
 #include "intrinsic.h"
 #ifdef USERPROG
 #include "userprog/process.h"
@@ -68,70 +69,6 @@ static void init_thread(struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule(void);
 static tid_t allocate_tid(void);
-
-/* mlfq를 위한 함수들 선언*/
-void mlfqs_calculate_priority(struct thread *t);
-void mlfqs_calculate_recent_cpu(struct thread *t);
-void mlfqs_calculate_load_avg(void);
-
-/* fixed_point를 위한 함수 선언 및 정의 */
-int int_to_fp(int n)
-{
-	return n * F;
-}
-
-int fp_to_int(int x)
-{
-	return x / F;
-}
-
-int fp_to_int_round(int x)
-{
-	if (x >= 0)
-		return (x + F / 2) / F;
-	else
-		return (x - F / 2) / F;
-}
-
-int add_fp(int x, int y)
-{
-	return x + y;
-}
-
-int sub_fp(int x, int y)
-{
-	return x - y;
-}
-
-int add_mixed(int x, int n)
-{
-	return x + n * F;
-}
-
-int sub_mixed(int x, int n)
-{
-	return x - n * F;
-}
-
-int mult_fp(int x, int y)
-{
-	return ((int64_t)x) * y / F;
-}
-
-int mult_mixed(int x, int n)
-{
-	return x * n;
-}
-
-int div_fp(int x, int y)
-{
-	return ((int64_t)x) * F / y;
-}
-
-int div_mixed(int x, int n)
-{
-	return x / n;
-}
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -935,4 +872,50 @@ void mlfqs_recalculate_priority(void)
 		struct thread *t = list_entry(e, struct thread, allelem);
 		mlfqs_calculate_priority(t);
 	}
+}
+
+/* fixed_point를 위한 함수 선언 및 정의 */
+int int_to_fp(int n)
+{
+	return n * F;
+}
+int fp_to_int(int x)
+{
+	return x / F;
+}
+int fp_to_int_round(int x)
+{
+	return x >= 0 ? (x + F / 2) / F : (x - F / 2) / F;
+}
+int add_fp(int x, int y)
+{
+	return x + y;
+}
+int sub_fp(int x, int y)
+{
+	return x - y;
+}
+int add_mixed(int x, int n)
+{
+	return x + n * F;
+}
+int sub_mixed(int x, int n)
+{
+	return x - n * F;
+}
+int mult_fp(int x, int y)
+{
+	return (int64_t)x * y / F;
+}
+int mult_mixed(int x, int n)
+{
+	return x * n;
+}
+int div_fp(int x, int y)
+{
+	return (int64_t)x * F / y;
+}
+int div_mixed(int x, int n)
+{
+	return x / n;
 }
