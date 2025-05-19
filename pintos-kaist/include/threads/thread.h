@@ -28,6 +28,11 @@ typedef int tid_t;
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63	   /* Highest priority. */
 
+/* mlfqs 를 위한 #define 추가*/
+#define NICE_DEFAULT 0
+#define RECENT_CPU_DEFAULT 0
+#define LOAD_AVG_DEFAULT 0
+
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -123,6 +128,13 @@ struct thread
 	struct list donation_list;
 	struct list_elem donation_elem;
 	struct lock *waiting_lock;
+
+	/* mlfqs를 위한 변수 추가*/
+	int nice;
+	int recent_cpu;
+
+	/* all_list의 리스트 요소*/
+	struct list_elem allelem;
 };
 
 /* If false (default), use round-robin scheduler.
@@ -174,5 +186,13 @@ bool thread_priority_greater(const struct list_elem *a, const struct list_elem *
 
 /* 양보 시 우선순위 선점 함수 선언*/
 void thread_preempt(void);
+
+/* mlfq를 위한 함수들 선언*/
+void mlfqs_calculate_priority(struct thread *t);
+void mlfqs_calculate_recent_cpu(struct thread *t);
+void mlfqs_calculate_load_avg(void);
+void mlfqs_increment_recent_cpu(void);
+void mlfqs_recalculate_recent_cpu(void);
+void mlfqs_recalculate_priority(void);
 
 #endif /* threads/thread.h */
