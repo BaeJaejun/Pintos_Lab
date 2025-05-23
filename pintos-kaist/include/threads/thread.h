@@ -9,6 +9,8 @@
 #include "vm/vm.h"
 #endif
 
+#include "threads/synch.h"
+
 /* States in a thread's life cycle. */
 enum thread_status
 {
@@ -135,6 +137,23 @@ struct thread
 
 	/* all_list의 리스트 요소*/
 	struct list_elem allelem;
+
+	/* exit()를 위한 종료 상태 변수 추가 */
+	int exit_status;
+
+	/* process의 부모 자식 관계를 위한 변수 추가*/
+	struct list children; // struct child_status elem 들의 리스트
+	tid_t parent_tid;	  // 나의 부모를 기록
+};
+
+/* 자식 프로세스 상태를 기록할 구조체 */
+struct child_status
+{
+	tid_t tid;			   /* 자식 스레드/프로세스 id */
+	int exit_status;	   /* 자식이 exit() 에서 넘긴 상태 코드 */
+	bool has_exited;	   /* exit() 이 이미 호출되었는지 */
+	struct semaphore sema; /* 부모가 대기(sema_down)할 세마포어 */
+	struct list_elem elem; /* 부모의 children 리스트 항목 연결자 */
 };
 
 /* If false (default), use round-robin scheduler.
@@ -194,5 +213,8 @@ void mlfqs_calculate_load_avg(void);
 void mlfqs_increment_recent_cpu(void);
 void mlfqs_recalculate_recent_cpu(void);
 void mlfqs_recalculate_priority(void);
+
+/* TID로 thread 구조체를 찾아서 반환, 없으면 NULL */
+struct thread *thread_by_tid(tid_t tid);
 
 #endif /* threads/thread.h */
