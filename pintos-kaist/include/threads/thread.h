@@ -135,6 +135,10 @@ struct thread
 
 	/* all_list의 리스트 요소*/
 	struct list_elem allelem;
+
+	struct file *fd_list[64];
+	int next_fd;
+
 };
 
 /* If false (default), use round-robin scheduler.

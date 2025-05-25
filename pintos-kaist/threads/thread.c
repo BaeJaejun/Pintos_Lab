@@ -220,7 +220,10 @@ tid_t thread_create(const char *name, int priority,
 
 	/* 새 스레드에게 cpu에 올라가서 기부및 선점 할지 말지 기회를 준다.*/
 	thread_preempt();
-
+	for(int i = 0; i<63; i++){
+		t->fd_list[i] = NULL;
+	} 
+	t->next_fd = 3;
 	return tid;
 }
 
