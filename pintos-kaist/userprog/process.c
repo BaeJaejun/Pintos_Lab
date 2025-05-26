@@ -87,8 +87,11 @@ tid_t process_create_initd(const char *file_name)
 	c->tid = tid;
 	thread_by_tid(tid)->parent_tid = parent->tid;
 
-	/* 5) 부모는 initd 준비(사실은 바로 끝나니)까지 기다렸다가 리턴 */
+	/* 5) 부모는 initd 준비까지 기다렸다가 리턴 */
 	sema_down(&c->sema);
+	list_remove(&c->elem);
+	free(c);
+
 	return tid;
 }
 
@@ -117,6 +120,7 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 	if (!child_if)
 		return TID_ERROR;
 	*child_if = *if_;
+	/* 자식 프로세스가 fork 리턴 받을 땐 0이 되어야 함*/
 	child_if->R.rax = 0;
 
 	/* 2) 부모의 children 리스트에 등록할 구조체 할당 */
@@ -165,22 +169,29 @@ duplicate_pte(uint64_t *pte, void *va, void *aux)
 	bool writable;
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
-
+	if (!is_user_vaddr(va))
+		return true;
 	/* 2. Resolve VA from the parent's page map level 4. */
 	parent_page = pml4_get_page(parent->pml4, va);
-
+	if (parent_page == NULL)
+		return true;
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
 	 *    TODO: NEWPAGE. */
-
+	newpage = palloc_get_page(PAL_USER);
+	if (newpage == NULL)
+		return false;
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
-
+	memcpy(newpage, parent_page, PGSIZE);
+	writable = (*pte & PTE_W) != 0;
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
 	if (!pml4_set_page(current->pml4, va, newpage, writable))
 	{
 		/* 6. TODO: if fail to insert page, do error handling. */
+		palloc_free_page(newpage);
+		return false;
 	}
 	return true;
 }
@@ -220,6 +231,15 @@ __do_fork(void *aux)
 	 * TODO:       in include/filesys/file.h. Note that parent should not return
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
+
+	for (int fd = 2; fd < MAX_FD; fd++)
+	{
+		struct file *f = parent->fd_table[fd];
+		if (f != NULL)
+			current->fd_table[fd] = file_duplicate(f);
+	}
+	current->next_fd = parent->next_fd;
+
 	if (parent != NULL)
 	{
 		struct list_elem *e;
@@ -267,8 +287,10 @@ int process_exec(void *f_name)
 	/* If load failed, quit. */
 	palloc_free_page(file_name);
 	if (!success)
+	{
+		process_cleanup(); // 비정상 종료시 자원 해제
 		return -1;
-
+	}
 	/* Start switched process. */
 	do_iret(&_if);
 	NOT_REACHED();
@@ -329,33 +351,46 @@ void process_exit(void)
 	struct list_elem *e;
 	struct child_status *c;
 
-	/* 1) 종료 메시지 출력 */
-	printf("%s: exit(%d)\n", curr->name, curr->exit_status);
-
-	/* 2) 부모에게 exit 상태 전달 및 sema_up() */
+	/* --- USERPROG 에서만 종료메시지 찍게 설정하기 --- */
 	if (curr->parent_tid != TID_ERROR)
 	{
-		parent = thread_by_tid(curr->parent_tid);
-		if (parent != NULL)
+		/* 1) 종료 메시지 출력 */
+		printf("%s: exit(%d)\n", curr->name, curr->exit_status);
+
+		/* 2) 부모에게 exit 상태 전달 및 sema_up() */
+		if (curr->parent_tid != TID_ERROR)
 		{
-			for (e = list_begin(&parent->children);
-				 e != list_end(&parent->children);
-				 e = list_next(e))
+			parent = thread_by_tid(curr->parent_tid);
+			if (parent != NULL)
 			{
-				c = list_entry(e, struct child_status, elem);
-				if (c->tid == curr->tid)
+				for (e = list_begin(&parent->children);
+					 e != list_end(&parent->children);
+					 e = list_next(e))
 				{
-					c->exit_status = curr->exit_status;
-					c->has_exited = true;
-					sema_up(&c->sema);
-					break;
+					c = list_entry(e, struct child_status, elem);
+					if (c->tid == curr->tid)
+					{
+						c->exit_status = curr->exit_status;
+						c->has_exited = true;
+						sema_up(&c->sema);
+						break;
+					}
 				}
 			}
 		}
+
+		// TODO: fd_table 순회하여 file_close()
+		for (int fd = 2; fd < MAX_FD; fd++)
+		{
+			if (curr->fd_table[fd])
+			{
+				lock_acquire(&filesys_lock);
+				file_close(curr->fd_table[fd]);
+				lock_release(&filesys_lock);
+				curr->fd_table[fd] = NULL;
+			}
+		}
 	}
-
-	// TODO: fd_table 순회하여 file_close()
-
 	process_cleanup();
 }
 
@@ -478,17 +513,21 @@ load(const char *file_name, struct intr_frame *if_)
 		saveptr : strtok_r 내부가 다음 검색 위치를 기억하기 위해 사용하는 포인터
 		token : 잘라낸 각 토큰(단어)을 가리키는 포인터
 		argc : 토큰 개수를 세는 카운터
-		argv[128] : 잘라낸 토큰들의 시작 주소를 순서대로 저장할 배열
+		argv[64] : 잘라낸 토큰들의 시작 주소를 순서대로 저장할 배열
 	*/
 	char *saveptr, *token;
 	int argc = 0;
-	char *argv[128];
+	char *argv[64];
 	for (token = strtok_r(file_name, " ", &saveptr); // 첫 토큰 얻기
 		 token != NULL;								 // token이 NULL될때까지 반복
 		 token = strtok_r(NULL, " ", &saveptr))		 // 다음 토큰 얻기
 	{
+		if (argc >= 63)
+			break; // 63개 까지만
 		argv[argc++] = token;
 	}
+	argv[argc] = NULL; // 마지막은 null
+
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create();
 	if (t->pml4 == NULL)
@@ -609,7 +648,12 @@ load(const char *file_name, struct intr_frame *if_)
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close(file);
+	if (file != NULL)
+	{
+		lock_acquire(&filesys_lock);
+		file_close(file);
+		lock_release(&filesys_lock);
+	}
 	return success;
 }
 

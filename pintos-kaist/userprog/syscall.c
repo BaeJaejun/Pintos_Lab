@@ -17,6 +17,9 @@
 #include "userprog/process.h"
 #include "threads/palloc.h"
 #include <string.h>
+#include "filesys/filesys.h"
+#include "filesys/file.h"
+#include "devices/input.h"
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
@@ -28,7 +31,12 @@ void check_user_buffer(char *buffer, size_t size);
 /* System call을 위한 함수 선언 */
 void sys_exit(int status);
 int sys_write(int fd, const void *buffer, unsigned size);
+int sys_read(int fd, void *buffer, unsigned size);
 void sys_halt(void);
+
+/* fd 할당/해제를 위한 함수 선언 */
+static int allocate_fd(struct file *f);
+static void free_fd(int fd);
 
 /* System call.
  *
@@ -80,18 +88,23 @@ void syscall_handler(struct intr_frame *f UNUSED)
 	/* int write(int fd, const void *buffer, unsigned size); 호출 시 */
 	case SYS_WRITE:
 	{
-		int fd = (int)f->R.rdi;		   // 단순 값
-		void *buf = (void *)f->R.rsi;  // 검사가 필요
-		size_t cnt = (size_t)f->R.rdx; // 단순 값
+		int fd = (int)f->R.rdi;			 // 단순 값
+		void *buffer = (void *)f->R.rsi; // 검사가 필요
+		size_t size = (size_t)f->R.rdx;	 // 단순 값
 
+		if (size == 0)
+		{
+			f->R.rax = 0;
+			break;
+		}
 		/* buffer 포인터가 유효한 유저 영역인지 */
-		check_user_address(buf);
+		check_user_address(buffer);
 
 		/* buffer 가 cnt 바이트 연속으로 유효한지 (페이지 경계를 넘어가도) */
-		check_user_buffer((char *)buf, cnt);
+		check_user_buffer((char *)buffer, size);
 
 		/* 이제 안전하므로 출력 */
-		f->R.rax = sys_write(fd, buf, cnt);
+		f->R.rax = sys_write(fd, buffer, size);
 		break;
 	}
 	/* int wait(tid_t tid); 호출 시	*/
@@ -107,7 +120,7 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		sys_halt();
 		break;
 	}
-	/* exec (const char *file); 호출 시 */
+	/* int exec(const char *file); 호출 시 */
 	case SYS_EXEC:
 	{
 		char *file_name = (char *)f->R.rdi;
@@ -115,11 +128,16 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		check_user_buffer(file_name, strlen(file_name) + 1);
 		char *kpage = palloc_get_page(PAL_USER | PAL_ZERO);
 		if (!kpage)
-			f->R.rax = -1;
+			sys_exit(-1);
+		// f->R.rax = -1;
 		else
 		{
 			strlcpy(kpage, file_name, PGSIZE);
-			f->R.rax = process_exec(kpage);
+			// f->R.rax = process_exec(kpage);
+			/* process_exec이 성공하면 여기로 돌아오지 않음.
+			   실패 시 -1을 반환하므로, 즉시 종료. */
+			process_exec(kpage);
+			sys_exit(-1);
 		}
 		break;
 	}
@@ -129,6 +147,135 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		char *thread_name = (char *)f->R.rdi;
 		check_user_buffer(thread_name, strlen(thread_name) + 1);
 		f->R.rax = process_fork(thread_name, f);
+		break;
+	}
+	/* int read (int fd, void *buffer, unsigned size); 호출 시 */
+	case SYS_READ:
+	{
+		int fd = (int)f->R.rdi;
+		void *buffer = (void *)f->R.rsi;
+		unsigned size = (unsigned)f->R.rdx;
+		if (size == 0)
+		{
+			f->R.rax = 0;
+			break;
+		}
+		check_user_address(buffer);
+		check_user_buffer(buffer, size);
+
+		f->R.rax = sys_read(fd, buffer, size);
+
+		break;
+	}
+	/* bool create (const char *file, unsigned initial_size); 호출 시 */
+	case SYS_CREATE:
+	{
+		const char *file = (const char *)f->R.rdi;
+		unsigned initial_size = (unsigned)f->R.rsi;
+		check_user_address(file);
+		check_user_buffer((char *)file, strlen(file) + 1);
+
+		lock_acquire(&filesys_lock);
+		f->R.rax = filesys_create(file, initial_size);
+		lock_release(&filesys_lock);
+
+		break;
+	}
+	/* bool remove (const char *file); 호출 시 */
+	case SYS_REMOVE:
+	{
+		const char *file = (const char *)f->R.rdi;
+		check_user_address(file);
+		check_user_buffer((char *)file, strlen(file) + 1);
+
+		lock_acquire(&filesys_lock);
+		f->R.rax = filesys_remove(file);
+		lock_release(&filesys_lock);
+
+		break;
+	}
+	/* int open (const char *file) 호출 시*/
+	case SYS_OPEN:
+	{
+		const char *file = (const char *)f->R.rdi;
+		check_user_address(file);
+		check_user_buffer(file, strlen(file) + 1);
+
+		lock_acquire(&filesys_lock);
+		struct file *fptr = filesys_open(file);
+		lock_release(&filesys_lock);
+
+		if (!fptr)
+		{
+			f->R.rax = -1;
+		}
+		else
+		{
+			int fd = allocate_fd(fptr);
+			if (fd < 0)
+				file_close(fptr);
+			f->R.rax = fd;
+		}
+		break;
+	}
+	/* void close (int fd); 호출 시*/
+	case SYS_CLOSE:
+	{
+		int fd = (int)f->R.rdi;
+		if (fd > 1 && fd < MAX_FD && thread_current()->fd_table[fd])
+		{
+			lock_acquire(&filesys_lock);
+			file_close(thread_current()->fd_table[fd]);
+			lock_release(&filesys_lock);
+
+			free_fd(fd);
+		}
+		f->R.rax = 0;
+		break;
+	}
+	/* int filesize (int fd); 호출 시 */
+	case SYS_FILESIZE:
+	{
+		int fd = (int)f->R.rdi;
+		struct file *fptr = NULL;
+		if (fd > 1 && fd < MAX_FD)
+			fptr = thread_current()->fd_table[fd];
+
+		lock_acquire(&filesys_lock);
+		f->R.rax = fptr ? (off_t)file_length(fptr) : -1;
+		lock_release(&filesys_lock);
+
+		break;
+	}
+	/* void seek (int fd, unsigned position); 호출 시 */
+	case SYS_SEEK:
+	{
+		int fd = (int)f->R.rdi;
+		unsigned pos = (unsigned)f->R.rsi;
+		struct file *fptr = NULL;
+		if (fd > 1 && fd < MAX_FD)
+			fptr = thread_current()->fd_table[fd];
+		if (fptr)
+		{
+			lock_acquire(&filesys_lock);
+			file_seek(fptr, pos);
+			lock_release(&filesys_lock);
+		}
+		f->R.rax = 0;
+		break;
+	}
+	/* unsigned tell (int fd); 호출 시 */
+	case SYS_TELL:
+	{
+		int fd = (int)f->R.rdi;
+		struct file *fptr = NULL;
+		if (fd > 1 && fd < MAX_FD)
+			fptr = thread_current()->fd_table[fd];
+
+		lock_acquire(&filesys_lock);
+		f->R.rax = fptr ? (unsigned)file_tell(fptr) : -1;
+		lock_release(&filesys_lock);
+
 		break;
 	}
 	default:
@@ -159,6 +306,9 @@ void check_user_buffer(char *buffer, size_t size)
 	const uint8_t *ptr = (uint8_t *)buffer; // 1바이트 단위 포인터로 변환
 	size_t ofs = 0;							// 현재 검사위치를 나타내는 오프셋 변수
 
+	if (size == 0)
+		return;
+
 	while (ofs < size) // 사이즈만큼 다 검사
 	{
 		void *addr = (void *)(ptr + ofs); // 검사할 현재 주소 계산
@@ -183,17 +333,75 @@ void sys_exit(int status)
 
 int sys_write(int fd, const void *buffer, unsigned size)
 {
+	int ret;
 	if (fd == 1)
 	{
 		putbuf(buffer, size); // 콘솔 출력
-		return size;
+		ret = size;
 	}
-	// 다른 fd는 일단 미지원
-	return -1;
+	else if (fd > 1 && fd < MAX_FD && thread_current()->fd_table[fd])
+	{
+		lock_acquire(&filesys_lock);
+		ret = file_write(thread_current()->fd_table[fd], buffer, size);
+		lock_release(&filesys_lock);
+	}
+	else
+	{
+		ret = -1;
+	}
+	return ret;
 }
 
 /* halt() power_off를 위한 sys_halt()*/
 void sys_halt(void)
 {
 	power_off();
+}
+
+int sys_read(int fd, void *buffer, unsigned size)
+{
+	int ret;
+	if (fd == 0) // stdin
+	{
+		for (unsigned i = 0; i < size; i++)
+		{
+			((char *)buffer)[i] = input_getc();
+		}
+		ret = size;
+	}
+	else if (fd > 1 && fd < MAX_FD && thread_current()->fd_table[fd])
+	{
+		lock_acquire(&filesys_lock);
+		ret = file_read(thread_current()->fd_table[fd], buffer, size);
+		lock_release(&filesys_lock);
+	}
+	else
+	{
+		ret = -1;
+	}
+	return ret;
+}
+
+/* fd 할당 / 해제 헬퍼 함수*/
+static int allocate_fd(struct file *f)
+{
+	struct thread *cur = thread_current();
+	for (int fd = cur->next_fd; fd < MAX_FD; fd++)
+	{
+		if (cur->fd_table[fd] == NULL)
+		{
+			cur->fd_table[fd] = f;
+			cur->next_fd = fd + 1;
+			return fd;
+		}
+	}
+	return -1;
+}
+
+static void free_fd(int fd)
+{
+	struct thread *cur = thread_current();
+	cur->fd_table[fd] = NULL;
+	if (fd < cur->next_fd)
+		cur->next_fd = fd;
 }

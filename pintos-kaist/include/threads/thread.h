@@ -35,6 +35,9 @@ typedef int tid_t;
 #define RECENT_CPU_DEFAULT 0
 #define LOAD_AVG_DEFAULT 0
 
+/* fd를 위한 #define 추가*/
+#define MAX_FD 60
+
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -144,6 +147,10 @@ struct thread
 	/* process의 부모 자식 관계를 위한 변수 추가*/
 	struct list children; // struct child_status elem 들의 리스트
 	tid_t parent_tid;	  // 나의 부모를 기록
+
+	/* fd 테이블을 추가*/
+	struct file *fd_table[MAX_FD];
+	int next_fd;
 };
 
 /* 자식 프로세스 상태를 기록할 구조체 */

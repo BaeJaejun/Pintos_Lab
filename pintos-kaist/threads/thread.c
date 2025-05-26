@@ -547,6 +547,13 @@ init_thread(struct thread *t, const char *name, int priority)
 	 allelem은 struct thread에 있어야 함
 	*/
 	list_push_back(&all_list, &t->allelem);
+
+	/* fd 테이블 초기화 */
+	for (int i = 0; i < MAX_FD; i++)
+	{
+		t->fd_table[i] = NULL;
+	}
+	t->next_fd = 2; /* 0: stdin, 1: stdout 예약 */
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
