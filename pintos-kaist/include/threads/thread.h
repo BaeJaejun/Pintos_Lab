@@ -151,6 +151,9 @@ struct thread
 	/* fd 테이블을 추가*/
 	struct file *fd_table[MAX_FD];
 	int next_fd;
+
+	/* rox를 위한 자신이 실행한 프로그램을 가짐 */
+	struct file *exec_prog;
 };
 
 /* 자식 프로세스 상태를 기록할 구조체 */

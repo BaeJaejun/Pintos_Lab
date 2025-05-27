@@ -81,6 +81,7 @@ void syscall_handler(struct intr_frame *f UNUSED)
 	case SYS_EXIT:
 	{
 		int status = (int)f->R.rdi;
+
 		/* status 가 유효한 포인터가 아니고 단순 값이므로 검사 불필요 */
 		sys_exit(status);
 		break;
@@ -175,9 +176,7 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		check_user_address(file);
 		check_user_buffer((char *)file, strlen(file) + 1);
 
-		lock_acquire(&filesys_lock);
 		f->R.rax = filesys_create(file, initial_size);
-		lock_release(&filesys_lock);
 
 		break;
 	}
@@ -188,9 +187,7 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		check_user_address(file);
 		check_user_buffer((char *)file, strlen(file) + 1);
 
-		lock_acquire(&filesys_lock);
 		f->R.rax = filesys_remove(file);
-		lock_release(&filesys_lock);
 
 		break;
 	}
@@ -201,9 +198,7 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		check_user_address(file);
 		check_user_buffer(file, strlen(file) + 1);
 
-		lock_acquire(&filesys_lock);
 		struct file *fptr = filesys_open(file);
-		lock_release(&filesys_lock);
 
 		if (!fptr)
 		{
@@ -224,9 +219,7 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		int fd = (int)f->R.rdi;
 		if (fd > 1 && fd < MAX_FD && thread_current()->fd_table[fd])
 		{
-			lock_acquire(&filesys_lock);
 			file_close(thread_current()->fd_table[fd]);
-			lock_release(&filesys_lock);
 
 			free_fd(fd);
 		}
@@ -241,9 +234,7 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		if (fd > 1 && fd < MAX_FD)
 			fptr = thread_current()->fd_table[fd];
 
-		lock_acquire(&filesys_lock);
 		f->R.rax = fptr ? (off_t)file_length(fptr) : -1;
-		lock_release(&filesys_lock);
 
 		break;
 	}
@@ -257,9 +248,7 @@ void syscall_handler(struct intr_frame *f UNUSED)
 			fptr = thread_current()->fd_table[fd];
 		if (fptr)
 		{
-			lock_acquire(&filesys_lock);
 			file_seek(fptr, pos);
-			lock_release(&filesys_lock);
 		}
 		f->R.rax = 0;
 		break;
@@ -272,9 +261,7 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		if (fd > 1 && fd < MAX_FD)
 			fptr = thread_current()->fd_table[fd];
 
-		lock_acquire(&filesys_lock);
 		f->R.rax = fptr ? (unsigned)file_tell(fptr) : -1;
-		lock_release(&filesys_lock);
 
 		break;
 	}
@@ -326,8 +313,12 @@ void check_user_buffer(char *buffer, size_t size)
 void sys_exit(int status)
 {
 	struct thread *curr = thread_current();
+	if (curr->exec_prog != NULL)
+	{
+		file_allow_write(curr->exec_prog);
+		file_close(curr->exec_prog);
+	}
 	curr->exit_status = status;
-
 	thread_exit(); // curr->status -> THREAD_DYING
 }
 
@@ -341,9 +332,7 @@ int sys_write(int fd, const void *buffer, unsigned size)
 	}
 	else if (fd > 1 && fd < MAX_FD && thread_current()->fd_table[fd])
 	{
-		lock_acquire(&filesys_lock);
 		ret = file_write(thread_current()->fd_table[fd], buffer, size);
-		lock_release(&filesys_lock);
 	}
 	else
 	{
@@ -371,9 +360,7 @@ int sys_read(int fd, void *buffer, unsigned size)
 	}
 	else if (fd > 1 && fd < MAX_FD && thread_current()->fd_table[fd])
 	{
-		lock_acquire(&filesys_lock);
 		ret = file_read(thread_current()->fd_table[fd], buffer, size);
-		lock_release(&filesys_lock);
 	}
 	else
 	{

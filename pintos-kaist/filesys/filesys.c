@@ -66,13 +66,17 @@ void filesys_done(void)
  * or if internal memory allocation fails. */
 bool filesys_create(const char *name, off_t initial_size)
 {
+	lock_acquire(&filesys_lock);
+
 	disk_sector_t inode_sector = 0;
 	struct dir *dir = dir_open_root();
+
 	bool success = (dir != NULL && free_map_allocate(1, &inode_sector) && inode_create(inode_sector, initial_size) && dir_add(dir, name, inode_sector));
 	if (!success && inode_sector != 0)
 		free_map_release(inode_sector, 1);
 	dir_close(dir);
 
+	lock_release(&filesys_lock);
 	return success;
 }
 
@@ -84,12 +88,16 @@ bool filesys_create(const char *name, off_t initial_size)
 struct file *
 filesys_open(const char *name)
 {
+	lock_acquire(&filesys_lock);
+
 	struct dir *dir = dir_open_root();
 	struct inode *inode = NULL;
 
 	if (dir != NULL)
 		dir_lookup(dir, name, &inode);
 	dir_close(dir);
+
+	lock_release(&filesys_lock);
 
 	return file_open(inode);
 }
@@ -100,10 +108,13 @@ filesys_open(const char *name)
  * or if an internal memory allocation fails. */
 bool filesys_remove(const char *name)
 {
+	lock_acquire(&filesys_lock);
+
 	struct dir *dir = dir_open_root();
 	bool success = dir != NULL && dir_remove(dir, name);
 	dir_close(dir);
 
+	lock_release(&filesys_lock);
 	return success;
 }
 

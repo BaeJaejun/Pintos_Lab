@@ -384,9 +384,7 @@ void process_exit(void)
 		{
 			if (curr->fd_table[fd])
 			{
-				lock_acquire(&filesys_lock);
 				file_close(curr->fd_table[fd]);
-				lock_release(&filesys_lock);
 				curr->fd_table[fd] = NULL;
 			}
 		}
@@ -542,6 +540,11 @@ load(const char *file_name, struct intr_frame *if_)
 		printf("load: %s: open failed\n", argv[0]);
 		goto done;
 	}
+
+	/* rox를 위한 deny 추가*/
+	file_deny_write(file);
+	t->exec_prog = file;
+
 	/* Read and verify executable header. */
 	if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr || memcmp(ehdr.e_ident, "\177ELF\2\1\1", 7) || ehdr.e_type != 2 || ehdr.e_machine != 0x3E // amd64
 		|| ehdr.e_version != 1 || ehdr.e_phentsize != sizeof(struct Phdr) || ehdr.e_phnum > 1024)
@@ -647,13 +650,12 @@ load(const char *file_name, struct intr_frame *if_)
 	success = true;
 
 done:
+	// load 이후에 file_close 해버리면 안되고, exit()가 되었을 때 파일을 닫아야 함
 	/* We arrive here whether the load is successful or not. */
-	if (file != NULL)
-	{
-		lock_acquire(&filesys_lock);
-		file_close(file);
-		lock_release(&filesys_lock);
-	}
+	// if (file != NULL)
+	// {
+	// 	file_close(file);
+	// }
 	return success;
 }
 
