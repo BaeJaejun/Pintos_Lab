@@ -49,9 +49,12 @@ process_create_initd (const char *file_name) {
 	if (fn_copy == NULL)
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
+	char *saveptr, *exec_file;
+
+	exec_file = strtok_r(file_name, " ", &saveptr);
 
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (exec_file, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -65,7 +68,7 @@ initd (void *f_name) {
 #endif
 
 	process_init ();
-
+	// msg("initd (%s)", (char*)f_name);
 	if (process_exec (f_name) < 0)
 		PANIC("Fail to launch initd\n");
 	NOT_REACHED ();
@@ -172,22 +175,22 @@ process_exec (void *f_name) {
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
 	_if.cs = SEL_UCSEG;
 	_if.eflags = FLAG_IF | FLAG_MBS;
+	memset(thread_current()->fd_list, 0, sizeof thread_current()->fd_list);
 
 	/* We first kill the current context */
 	process_cleanup ();
 
 	/* And then load the binary */
-	msg("load is c------------------------------");
 	success = load (file_name, &_if);
-
+	
 	/* If load failed, quit. */
 	palloc_free_page (file_name);
 	if (!success)
 		return -1;
-	
+	// msg("initd (%s)", (char*)f_name);
 	/* Start switched process. */
 	do_iret (&_if);
-	NOT_REACHED (); 
+	NOT_REACHED ();
 }
 
 
@@ -205,7 +208,7 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	while(1){
+	for(int i = 0; i<200000000; i++){
 		;
 	}
 	return -1;
@@ -325,109 +328,152 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
  * and its initial stack pointer into *RSP.
  * Returns true if successful, false otherwise. */
 static bool
-load (const char *file_name, struct intr_frame *if_) {
-	struct thread *t = thread_current ();
-	struct ELF ehdr;
-	struct file *file = NULL;
-	off_t file_ofs;
-	bool success = false;
-	int i;
-
-	/* Allocate and activate page directory. */
-	msg("load is c------------------------------");
-	t->pml4 = pml4_create ();
-	if (t->pml4 == NULL)
-		goto done;
-	process_activate (thread_current ());
-
-	/* Open executable file. */
-	file = filesys_open (file_name);
-	if (file == NULL) {
-		printf ("load: %s: open failed\n", file_name);
-		goto done;
-	}
-
-	/* Read and verify executable header. */
-	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
-			|| memcmp (ehdr.e_ident, "\177ELF\2\1\1", 7)
-			|| ehdr.e_type != 2
-			|| ehdr.e_machine != 0x3E // amd64
-			|| ehdr.e_version != 1
-			|| ehdr.e_phentsize != sizeof (struct Phdr)
-			|| ehdr.e_phnum > 1024) {
-		printf ("load: %s: error loading executable\n", file_name);
-		goto done;
-	}
-
-	/* Read program headers. */
-	file_ofs = ehdr.e_phoff;
-	for (i = 0; i < ehdr.e_phnum; i++) {
-		struct Phdr phdr;
-
-		if (file_ofs < 0 || file_ofs > file_length (file))
-			goto done;
-		file_seek (file, file_ofs);
-
-		if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
-			goto done;
-		file_ofs += sizeof phdr;
-		switch (phdr.p_type) {
-			case PT_NULL:
-			case PT_NOTE:
-			case PT_PHDR:
-			case PT_STACK:
-			default:
-				/* Ignore this segment. */
-				break;
-			case PT_DYNAMIC:
-			case PT_INTERP:
-			case PT_SHLIB:
-				goto done;
-			case PT_LOAD:
-				if (validate_segment (&phdr, file)) {
-					bool writable = (phdr.p_flags & PF_W) != 0;
-					uint64_t file_page = phdr.p_offset & ~PGMASK;
-					uint64_t mem_page = phdr.p_vaddr & ~PGMASK;
-					uint64_t page_offset = phdr.p_vaddr & PGMASK;
-					uint32_t read_bytes, zero_bytes;
-					if (phdr.p_filesz > 0) {
-						/* Normal segment.
-						 * Read initial part from disk and zero the rest. */
-						read_bytes = page_offset + phdr.p_filesz;
-						zero_bytes = (ROUND_UP (page_offset + phdr.p_memsz, PGSIZE)
-								- read_bytes);
-					} else {
-						/* Entirely zero.
-						 * Don't read anything from disk. */
-						read_bytes = 0;
-						zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
-					}
-					if (!load_segment (file, file_page, (void *) mem_page,
-								read_bytes, zero_bytes, writable))
-						goto done;
-				}
-				else
-					goto done;
-				break;
-		}
-	}
-
-	/* Set up stack. */
-	if (!setup_stack (if_))
-		goto done;
+load(const char *file_name, struct intr_frame *if_)
+{
+    struct thread *t = thread_current();
+    struct ELF ehdr;
+    struct file *file = NULL;
+    off_t file_ofs;
+    bool success = false;
+    int i;
+    /* argc, argv 받는 부분 추가 argument passing
+        1) file_name 문자열을 strtok_r로 토큰화
+        saveptr : strtok_r 내부가 다음 검색 위치를 기억하기 위해 사용하는 포인터
+        token : 잘라낸 각 토큰(단어)을 가리키는 포인터
+        argc : 토큰 개수를 세는 카운터
+        argv[128] : 잘라낸 토큰들의 시작 주소를 순서대로 저장할 배열
+    */
+    char *saveptr, *token;
+    int argc = 0;
+    char *argv[128];
+    for (token = strtok_r(file_name, " ", &saveptr); // 첫 토큰 얻기
+         token != NULL;                              // token이 NULL될때까지 반복
+         token = strtok_r(NULL, " ", &saveptr))        // 다음 토큰 얻기
+    {
+        argv[argc++] = token;
+    }
+    /* Allocate and activate page directory. */
+    t->pml4 = pml4_create();
+    if (t->pml4 == NULL)
+        goto done;
+    process_activate(thread_current());
+    /* Open executable file.
+        filename 전체가 아닌 첫번째 인자(프로그램 이름)
+    */
+    file = filesys_open(argv[0]);
+    if (file == NULL)
+    {
+        printf("load: %s: open failed\n", argv[0]);
+        goto done;
+    }
+    /* Read and verify executable header. */
+    if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr || memcmp(ehdr.e_ident, "\177ELF\2\1\1", 7) || ehdr.e_type != 2 || ehdr.e_machine != 0x3E // amd64
+        || ehdr.e_version != 1 || ehdr.e_phentsize != sizeof(struct Phdr) || ehdr.e_phnum > 1024)
+    {
+        printf("load: %s: error loading executable\n", argv[0]);
+        goto done;
+    }
+    /* Read program headers. */
+    file_ofs = ehdr.e_phoff;
+    for (i = 0; i < ehdr.e_phnum; i++)
+    {
+        struct Phdr phdr;
+        if (file_ofs < 0 || file_ofs > file_length(file))
+            goto done;
+        file_seek(file, file_ofs);
+        if (file_read(file, &phdr, sizeof phdr) != sizeof phdr)
+            goto done;
+        file_ofs += sizeof phdr;
+        switch (phdr.p_type)
+        {
+        case PT_NULL:
+        case PT_NOTE:
+        case PT_PHDR:
+        case PT_STACK:
+        default:
+            /* Ignore this segment. */
+            break;
+        case PT_DYNAMIC:
+        case PT_INTERP:
+        case PT_SHLIB:
+            goto done;
+        case PT_LOAD:
+            if (validate_segment(&phdr, file))
+            {
+                bool writable = (phdr.p_flags & PF_W) != 0;
+                uint64_t file_page = phdr.p_offset & ~PGMASK;
+                uint64_t mem_page = phdr.p_vaddr & ~PGMASK;
+                uint64_t page_offset = phdr.p_vaddr & PGMASK;
+                uint32_t read_bytes, zero_bytes;
+                if (phdr.p_filesz > 0)
+                {
+                    /* Normal segment.
+                     * Read initial part from disk and zero the rest. */
+                    read_bytes = page_offset + phdr.p_filesz;
+                    zero_bytes = (ROUND_UP(page_offset + phdr.p_memsz, PGSIZE) - read_bytes);
+                }
+                else
+                {
+                    /* Entirely zero.
+                     * Don't read anything from disk. */
+                    read_bytes = 0;
+                    zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
+                }
+                if (!load_segment(file, file_page, (void *)mem_page,
+                                  read_bytes, zero_bytes, writable))
+                    goto done;
+            }
+            else
+                goto done;
+            break;
+        }
+    }
+    /* Set up stack. */
+    if (!setup_stack(if_))
+        goto done;
 
 	/* Start address. */
-	if_->rip = ehdr.e_entry;
+    if_->rip = ehdr.e_entry;
 
-	/* TODO: Your code goes here.
-	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+    /* 2) _if.rsp(=initial esp) 기준으로 문자열 복사
+        -> 워드 정렬 -> argv 배열 푸시 -> 가짜리턴주소 푸시 -> 레지스터 설정
+        if_->rsp 유저 스택 최상단
+    */
+    /* 문자열 복사 */
+    for (int i = argc - 1; i >= 0; i--)
+    {
+        size_t len = strlen(argv[i]) + 1; // NULL('\0')까지 포함한 문자열 길이
+        if_->rsp -= len;               // esp를 문자열 크기만큼 낮춰, 복사할 공간 확보
+        memcpy(if_->rsp, argv[i], len);    // 스택(esp 위치)에 실제 문자열 복사
+        argv[i] = if_->rsp;                // argv[i]에 복사된 문자열의 스택 주소 저장
+    }
 
-	success = true;
+    /* 워드 정렬 (8바이트 경계) */
+    if_->rsp = (char *)((uintptr_t)(if_->rsp) & ~(uintptr_t)0x7);
+	
+    /* argv 배열, NULL 종단자 푸시 */
+    if_->rsp -= sizeof(char *); // 포인터는 8바이트!
+    *(char **)if_->rsp = NULL;
+    for (int i = argc - 1; i >= 0; i--)
+    {
+        if_->rsp -= sizeof(char *);
+        *(char **)if_->rsp = argv[i];
+    }
+
+    /* 가짜 리턴 주소 푸시 */
+    if_->rsp -= sizeof(void *);
+    *(void **)if_->rsp = NULL;
+
+    /* 레지스터 및 스택 포인터 업데이트 */
+    if_->R.rdi = argc;
+    if_->R.rsi = (uintptr_t)(if_->rsp + sizeof(void *));
+
+    success = true;
 
 done:
-	/* We arrive here whether the load is successful or not. */
-	file_close (file);
-	return success;
+    /* We arrive here whether the load is successful or not. */
+    file_close(file);
+    return success;
 }
 
 

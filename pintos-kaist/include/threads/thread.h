@@ -33,6 +33,8 @@ typedef int tid_t;
 #define RECENT_CPU_DEFAULT 0
 #define LOAD_AVG_DEFAULT 0
 
+#define FD_MAX 64
+#define FD_MIN 2
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -136,7 +138,7 @@ struct thread
 	/* all_list의 리스트 요소*/
 	struct list_elem allelem;
 
-	struct file *fd_list[64];
+	struct file *fd_list[FD_MAX];
 	int next_fd;
 
 };

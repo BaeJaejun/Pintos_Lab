@@ -136,7 +136,7 @@ void thread_start(void)
 	/* load_avg 전역변수 초기화 */
 	load_avg = LOAD_AVG_DEFAULT;
 	thread_create("idle", PRI_MIN, idle, &idle_started);
-
+	
 	/* Start preemptive thread scheduling. */
 	intr_enable();
 
@@ -214,16 +214,12 @@ tid_t thread_create(const char *name, int priority,
 	t->tf.ss = SEL_KDSEG;
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
+	memset(t->fd_list, 0, sizeof(t->fd_list));
 
 	/* Add to run queue. */
 	thread_unblock(t);
-
 	/* 새 스레드에게 cpu에 올라가서 기부및 선점 할지 말지 기회를 준다.*/
 	thread_preempt();
-	for(int i = 0; i<63; i++){
-		t->fd_list[i] = NULL;
-	} 
-	t->next_fd = 3;
 	return tid;
 }
 
@@ -543,6 +539,9 @@ init_thread(struct thread *t, const char *name, int priority)
 	 allelem은 struct thread에 있어야 함
 	*/
 	list_push_back(&all_list, &t->allelem);
+
+	t->next_fd = FD_MIN;
+    memset (t->fd_list, 0, sizeof t->fd_list);
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
