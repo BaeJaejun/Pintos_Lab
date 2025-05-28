@@ -27,6 +27,43 @@ static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
 
+/*file table에 추가*/
+int process_add_file(struct file *f)
+      {
+          struct thread *curr = thread_current();
+          struct file **fdt = curr->fd_table;
+
+          // limit을 넘지 않는 범위 안에서 빈 자리 탐색
+          while (curr->fd_next < FDT_COUNT_LIMIT && fdt[curr->fd_next])
+              curr->fd_next++;
+          if (curr->fd_next >= FDT_COUNT_LIMIT)
+              return -1;
+          fdt[curr->fd_next] = f;
+
+          return curr->fd_next;
+      }
+
+/*file 찾기*/
+struct file *process_get_file(int fd)
+{
+    struct thread *curr = thread_current();
+    struct file **fdt = curr->fd_table;
+
+    if (fd < 2 || fd >= FDT_COUNT_LIMIT)
+        return NULL;
+    return fdt[fd];
+}
+
+/*file table에 삭제*/
+void process_close_file(int fd)
+{
+    struct thread *curr = thread_current();
+    struct file **fdt = curr->fd_table;
+    if (fd < 2 || fd >= FDT_COUNT_LIMIT)
+        return NULL;
+    fdt[fd] = NULL;
+}
+
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
@@ -204,9 +241,11 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	for(int i=0 ; i<2000000000 ; i++)  {
+	}
 	return -1;
 }
-
+ 
 /* Exit the process. This function is called by thread_exit (). */
 void
 process_exit (void) {

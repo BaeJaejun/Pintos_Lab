@@ -33,6 +33,10 @@ typedef int tid_t;
 #define RECENT_CPU_DEFAULT 0
 #define LOAD_AVG_DEFAULT 0
 
+/*fd*/
+#define FDT_PAGES 2
+#define FDT_COUNT_LIMIT 128
+
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -135,6 +139,13 @@ struct thread
 
 	/* all_list의 리스트 요소*/
 	struct list_elem allelem;
+
+	/*종료 상태 추가 exit*/
+	int exit_status;
+
+	/*fd 관련 선언*/
+	struct file **fd_table;
+	int fd_next;
 };
 
 /* If false (default), use round-robin scheduler.

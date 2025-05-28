@@ -215,6 +215,11 @@ tid_t thread_create(const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+	/*fd 초기화*/
+	t->fd_table = palloc_get_multiple(PAL_ZERO, FDT_PAGES); // 추가
+    if (t->fd_table == NULL) // 추가
+        return TID_ERROR; 
+	
 	/* Add to run queue. */
 	thread_unblock(t);
 
@@ -540,6 +545,9 @@ init_thread(struct thread *t, const char *name, int priority)
 	 allelem은 struct thread에 있어야 함
 	*/
 	list_push_back(&all_list, &t->allelem);
+
+	/*fd 초기화*/
+	t->fd_next = 2; 
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
