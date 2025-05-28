@@ -536,10 +536,24 @@ init_thread(struct thread *t, const char *name, int priority)
 	t->nice = NICE_DEFAULT;
 	t->recent_cpu = RECENT_CPU_DEFAULT;
 
+	/* userprog 종료상태 변수 초기화 */
+	t->exit_status = -1;
+
+	/* pid 및 자식 리스트 초기화*/
+	t->parent_tid = TID_ERROR;
+	list_init(&t->children);
+
 	/* 스레드 등록 코드 추가
 	 allelem은 struct thread에 있어야 함
 	*/
 	list_push_back(&all_list, &t->allelem);
+
+	/* fd 테이블 초기화 */
+	for (int i = 0; i < MAX_FD; i++)
+	{
+		t->fd_table[i] = NULL;
+	}
+	t->next_fd = 2; /* 0: stdin, 1: stdout 예약 */
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
@@ -918,4 +932,20 @@ int div_fp(int x, int y)
 int div_mixed(int x, int n)
 {
 	return x / n;
+}
+
+/* tid로 스레드를 검색해 반환 */
+struct thread *
+thread_by_tid(tid_t tid)
+{
+	struct list_elem *e;
+	for (e = list_begin(&all_list);
+		 e != list_end(&all_list);
+		 e = list_next(e))
+	{
+		struct thread *t = list_entry(e, struct thread, allelem);
+		if (t->tid == tid)
+			return t;
+	}
+	return NULL;
 }
