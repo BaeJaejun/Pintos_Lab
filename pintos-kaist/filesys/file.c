@@ -11,7 +11,26 @@ struct file
 	struct inode *inode; /* File's inode. */
 	off_t pos;			 /* Current position. */
 	bool deny_write;	 /* Has file_deny_write() been called? */
+	int ref_cnt;		 /* fd 참조 개수 */
 };
+
+/* 콘솔을 가리키는 가짜 file 구조체 두 개 */
+struct file console_in;
+struct file console_out;
+
+void console_file_init(void)
+{
+	/* inode == NULL 이면 콘솔 입출력 분기로 처리하도록 */
+	console_in.inode = NULL;
+	console_in.pos = 0;
+	console_in.deny_write = false;
+	console_in.ref_cnt = 1;
+
+	console_out.inode = NULL;
+	console_out.pos = 0;
+	console_out.deny_write = false;
+	console_out.ref_cnt = 1;
+}
 
 /* Opens a file for the given INODE, of which it takes ownership,
  * and returns the new file.  Returns a null pointer if an
@@ -26,6 +45,7 @@ file_open(struct inode *inode)
 		file->inode = inode;
 		file->pos = 0;
 		file->deny_write = false;
+		file->ref_cnt = 1; // 초기 참조 카운트
 	}
 	else
 	{
@@ -60,17 +80,39 @@ file_duplicate(struct file *file)
 	return nfile;
 }
 
+/* dup2를 위한 함수 선언*/
+struct file *
+file_dup2(struct file *file)
+{
+	lock_acquire(&filesys_lock);
+	file->ref_cnt++;
+	lock_release(&filesys_lock);
+
+	return file;
+}
+
 /* Closes FILE. */
 void file_close(struct file *file)
 {
+	if (file == NULL)
+		return;
+
+	if (file == &console_in || file == &console_out)
+		return;
+
 	lock_acquire(&filesys_lock);
 
-	if (file != NULL)
+	/* 먼저 참조 카운트만 감소 */
+	file->ref_cnt--;
+
+	/* 마지막 복제본이 닫힐 때만 실제로 해제 작업 수행 */
+	if (file->ref_cnt == 0)
 	{
 		file_allow_write(file);
 		inode_close(file->inode);
 		free(file);
 	}
+
 	lock_release(&filesys_lock);
 }
 
@@ -89,6 +131,23 @@ file_get_inode(struct file *file)
 off_t file_read(struct file *file, void *buffer, off_t size)
 {
 	lock_acquire(&filesys_lock);
+
+	/* 출력디스크립터 일때 */
+	if (file == &console_out)
+	{
+		lock_release(&filesys_lock);
+		return -1;
+	}
+	/* 표준 입력 일때 */
+	else if (file->inode == NULL)
+	{
+		/* stdin 역할 */
+		for (off_t i = 0; i < size; i++)
+			((char *)buffer)[i] = input_getc();
+		lock_release(&filesys_lock);
+
+		return size;
+	}
 
 	off_t bytes_read = inode_read_at(file->inode, buffer, size, file->pos);
 	file->pos += bytes_read;
@@ -117,6 +176,22 @@ off_t file_read_at(struct file *file, void *buffer, off_t size, off_t file_ofs)
 off_t file_write(struct file *file, const void *buffer, off_t size)
 {
 	lock_acquire(&filesys_lock);
+
+	/* 입력디스크립터 일때 */
+	if (file == &console_in)
+	{
+		lock_release(&filesys_lock);
+		return -1;
+	}
+	/* 표준 출력력 일때 */
+	else if (file->inode == NULL)
+	{
+		/* stdout 역할 */
+		putbuf(buffer, size);
+		lock_release(&filesys_lock);
+
+		return size;
+	}
 
 	off_t bytes_written = inode_write_at(file->inode, buffer, size, file->pos);
 	file->pos += bytes_written;

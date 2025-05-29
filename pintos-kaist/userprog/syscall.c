@@ -33,6 +33,7 @@ void sys_exit(int status);
 int sys_write(int fd, const void *buffer, unsigned size);
 int sys_read(int fd, void *buffer, unsigned size);
 void sys_halt(void);
+int sys_dup2(int oldfd, int newfd);
 
 /* fd 할당/해제를 위한 함수 선언 */
 static int allocate_fd(struct file *f);
@@ -137,8 +138,8 @@ void syscall_handler(struct intr_frame *f UNUSED)
 			// f->R.rax = process_exec(kpage);
 			/* process_exec이 성공하면 여기로 돌아오지 않음.
 			   실패 시 -1을 반환하므로, 즉시 종료. */
-			process_exec(kpage);
-			sys_exit(-1);
+			int exec_ret = process_exec(kpage);
+			sys_exit(exec_ret); // exec_ret == -1 이므로 exit(-1)
 		}
 		break;
 	}
@@ -222,8 +223,10 @@ void syscall_handler(struct intr_frame *f UNUSED)
 			file_close(thread_current()->fd_table[fd]);
 
 			free_fd(fd);
+			f->R.rax = 0;
 		}
-		f->R.rax = 0;
+		else
+			f->R.rax = -1;
 		break;
 	}
 	/* int filesize (int fd); 호출 시 */
@@ -263,6 +266,14 @@ void syscall_handler(struct intr_frame *f UNUSED)
 
 		f->R.rax = fptr ? (unsigned)file_tell(fptr) : -1;
 
+		break;
+	}
+	/* int dup2(int oldfd, int newfd); 호출 시 */
+	case SYS_DUP2:
+	{
+		int oldfd = (int)f->R.rdi;
+		int newfd = (int)f->R.rsi;
+		f->R.rax = sys_dup2(oldfd, newfd);
 		break;
 	}
 	default:
@@ -325,12 +336,11 @@ void sys_exit(int status)
 int sys_write(int fd, const void *buffer, unsigned size)
 {
 	int ret;
-	if (fd == 1)
-	{
-		putbuf(buffer, size); // 콘솔 출력
-		ret = size;
-	}
-	else if (fd > 1 && fd < MAX_FD && thread_current()->fd_table[fd])
+
+	// 1) 파일 디스크립터 테이블에 매핑된 파일이 있으면,
+	//    무조건 그 파일로 쓰기 (dup2로 덮어쓴 stdout 포함)
+	// 표준 출력 처리는 file_write에서 했음
+	if (fd >= 0 && fd < MAX_FD && thread_current()->fd_table[fd])
 	{
 		ret = file_write(thread_current()->fd_table[fd], buffer, size);
 	}
@@ -350,15 +360,10 @@ void sys_halt(void)
 int sys_read(int fd, void *buffer, unsigned size)
 {
 	int ret;
-	if (fd == 0) // stdin
-	{
-		for (unsigned i = 0; i < size; i++)
-		{
-			((char *)buffer)[i] = input_getc();
-		}
-		ret = size;
-	}
-	else if (fd > 1 && fd < MAX_FD && thread_current()->fd_table[fd])
+	// 1) 파일 디스크립터 테이블에 매핑된 파일이 있으면,
+	//    무조건 그 파일로 쓰기 (dup2로 덮어쓴 stdin 포함)
+	// 표준 입력 처리는 file_read에서 했음
+	if (fd >= 0 && fd < MAX_FD && thread_current()->fd_table[fd])
 	{
 		ret = file_read(thread_current()->fd_table[fd], buffer, size);
 	}
@@ -367,6 +372,32 @@ int sys_read(int fd, void *buffer, unsigned size)
 		ret = -1;
 	}
 	return ret;
+}
+
+/* dup2를 위한 sys_dup2 */
+int sys_dup2(int oldfd, int newfd)
+{
+	struct thread *cur = thread_current();
+
+	// 유효성 검사
+	if (oldfd < 0 || oldfd >= MAX_FD || newfd < 0 || newfd >= MAX_FD)
+		return -1;
+
+	// oldfd가 열려 있지 않으면 실패(EBADF)
+	if (cur->fd_table[oldfd] == NULL)
+		return -1;
+
+	// fd 같으면 그냥 바로 리턴
+	if (oldfd == newfd)
+		return newfd;
+
+	// newfd 열려있다면 닫아주고
+	if (cur->fd_table[newfd] != NULL) // newfd가 열려있다면
+		file_close(cur->fd_table[newfd]);
+
+	cur->fd_table[newfd] = file_dup2(cur->fd_table[oldfd]);
+
+	return newfd;
 }
 
 /* fd 할당 / 해제 헬퍼 함수*/
