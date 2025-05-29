@@ -36,7 +36,7 @@ typedef int tid_t;
 #define LOAD_AVG_DEFAULT 0
 
 /* fd를 위한 #define 추가*/
-#define MAX_FD 60
+#define MAX_FD 512
 
 /* A kernel thread or user process.
  *
@@ -149,7 +149,7 @@ struct thread
 	tid_t parent_tid;	  // 나의 부모를 기록
 
 	/* fd 테이블을 추가*/
-	struct file *fd_table[MAX_FD];
+	struct file **fd_table; // fd_table 동적할당으로 변경
 	int next_fd;
 
 	/* rox를 위한 자신이 실행한 프로그램을 가짐 */

@@ -34,7 +34,16 @@ static void __do_fork(void *);
 static void
 process_init(void)
 {
-	struct thread *current = thread_current();
+	struct thread *cur = thread_current();
+
+	cur->fd_table = palloc_get_page(PAL_ZERO);
+	if (cur->fd_table == NULL)
+		PANIC("process_init: cannot alloc fd_table");
+
+	/* console_in/out 은 이미 thread_init() 시점에 초기화해 두었다고 가정 */
+	cur->fd_table[0] = &console_in;
+	cur->fd_table[1] = &console_out;
+	cur->next_fd = 2;
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -232,10 +241,19 @@ __do_fork(void *aux)
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
 
-	for (int fd = 2; fd < MAX_FD; fd++)
+	for (int fd = 0; fd < MAX_FD; fd++)
 	{
 		struct file *f = parent->fd_table[fd];
-		if (f != NULL)
+		if (f == NULL)
+		{
+			current->fd_table[fd] = NULL;
+		}
+		else if (f == &console_in || f == &console_out)
+		{
+			/* stdin : console_in 공유 */
+			current->fd_table[fd] = f;
+		}
+		else
 			current->fd_table[fd] = file_duplicate(f);
 	}
 	current->next_fd = parent->next_fd;
@@ -380,9 +398,11 @@ void process_exit(void)
 		}
 
 		// TODO: fd_table 순회하여 file_close()
-		for (int fd = 2; fd < MAX_FD; fd++)
+		for (int fd = 0; fd < MAX_FD; fd++)
 		{
-			if (curr->fd_table[fd])
+			struct file *f = curr->fd_table[fd];
+			if (f != NULL && f != &console_in /* stdin 예외 */
+				&& f != &console_out)		  /* stdout 예외 */
 			{
 				file_close(curr->fd_table[fd]);
 				curr->fd_table[fd] = NULL;
