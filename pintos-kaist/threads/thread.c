@@ -16,6 +16,8 @@
 #include "userprog/process.h"
 #endif
 
+#include "filesys/file.h" // dup2 표준 입출력을 위한 파일 헤더 추가
+
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
    of thread.h for details. */
@@ -117,6 +119,7 @@ void thread_init(void)
 
 	/* all_list 초기화 추가*/
 	list_init(&all_list);
+	console_file_init(); // 콘솔 가짜파일 초기화
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread();
@@ -203,6 +206,19 @@ tid_t thread_create(const char *name, int priority,
 	/* Initialize thread. */
 	init_thread(t, name, priority);
 	tid = t->tid = allocate_tid();
+
+	/* fd 테이블을 동적 페이지로 할당 */
+	t->fd_table = palloc_get_page(PAL_ZERO);
+	if (t->fd_table == NULL)
+	{
+		/* palloc 실패 시, 구조체 페이지도 돌려주고 에러 처리 */
+		palloc_free_page(t);
+		return TID_ERROR;
+	}
+	/* fd 테이블은 palloc_zero된 페이지라 이미 NULL로 초기화됨 */
+	t->fd_table[0] = &console_in;
+	t->fd_table[1] = &console_out;
+	t->next_fd = 2; /* 0: stdin, 1: stdout 예약 */
 
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
@@ -356,6 +372,10 @@ void thread_exit(void)
 	   We will be destroyed during the call to schedule_tail(). */
 	/* all_list에서 스레드 제거 */
 	list_remove(&thread_current()->allelem);
+
+	/* fd_table 페이지 해제 */
+	palloc_free_page(thread_current()->fd_table);
+	thread_current()->fd_table = NULL;
 
 	intr_disable();
 	do_schedule(THREAD_DYING);
@@ -535,6 +555,15 @@ init_thread(struct thread *t, const char *name, int priority)
 	/* mlfqs를 위한 변수들 초기화 */
 	t->nice = NICE_DEFAULT;
 	t->recent_cpu = RECENT_CPU_DEFAULT;
+
+	/* userprog 종료상태 변수 초기화 */
+	t->exit_status = -1;
+
+	/* pid 및 자식 리스트 초기화*/
+	t->parent_tid = TID_ERROR;
+	list_init(&t->children);
+
+	t->fd_table = NULL;
 
 	/* 스레드 등록 코드 추가
 	 allelem은 struct thread에 있어야 함
@@ -918,4 +947,20 @@ int div_fp(int x, int y)
 int div_mixed(int x, int n)
 {
 	return x / n;
+}
+
+/* tid로 스레드를 검색해 반환 */
+struct thread *
+thread_by_tid(tid_t tid)
+{
+	struct list_elem *e;
+	for (e = list_begin(&all_list);
+		 e != list_end(&all_list);
+		 e = list_next(e))
+	{
+		struct thread *t = list_entry(e, struct thread, allelem);
+		if (t->tid == tid)
+			return t;
+	}
+	return NULL;
 }
